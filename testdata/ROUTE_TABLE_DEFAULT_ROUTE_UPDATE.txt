@@ -1,4 +1,0 @@
-{
-    "ifname": "dummy",
-    "nexthop": "dummy"
-}

@@ -8,73 +8,121 @@ import (
 	sdc "github.com/sonic-net/sonic-gnmi/sonic_data_client"
 )
 
-func getPortTable() (map[string]interface{}, error) {
+func isRoleInternal(role string) bool {
+    return role == "Int" || role == "Inb" || role == "Rec" || role == "Dpc"
+}
+
+func isFrontPanelPort(iface string, role string) bool {
+    if !strings.HasPrefix(iface, "Ethernet") {
+        return false
+    }
+    if strings.HasPrefix(iface, "Ethernet-BP") || strings.HasPrefix(iface, "Ethernet-IB") || strings.HasPrefix(iface, "Ethernet-Rec") {
+        return false
+    }
+    if strings.Contains(iface, ".") {
+        return false
+    }
+    return !isRoleInternal(role)
+}
+
+func isValidPhysicalPort(iface string) (bool, error) {
     queries := [][]string{
-	    {"CONFIG_DB", "PORT"}
+	    {"APPL_DB", "PORT_TABLE"},
 	}
 	portTable, err := GetMapFromQueries(queries)
 	if err != nil {
-		log.Errorf("Unable to get data from queries %v, got err: %v", queries, err)
+		log.Errorf("Unable to pull data for queries %v, got err %v", queries, err)
+		return false, err
+	}
+    role := GetFieldValueString(portTable, iface, defaultMissingCounterValue, "role")
+    return isFrontPanelPort(iface, role), nil
+}
+
+func getLogicalToPhysical(logicalPort string) (string, error) {
+    logicalToPhysical := make(map[string]string)
+    logical := []string{}
+
+    queries := [][]string{
+        {"CONFIG_DB", "PORT"},
+    }
+    portTable, err := GetMapFromQueries(queries)
+	if err != nil {
+		log.Errorf("Unable to pull data for queries %v, got err %v", queries, err)
 		return nil, err
 	}
-	return portTable, nil
-}
+	for key := range portTable {
+        parts := strings.SplitN(key, ":", 2)
 
-func getLogicalToPhysical(intf string) string {
-	portTable, err := getPortTable()
-	physicalPort := GetFieldValueString(portTable, intf, defaultMissingCounterValue, "alias")
-    return physicalPort
-}
+	    var iface string
+	    if len(parts) == 2 {
+            iface = strings.TrimSpace(parts[1])
+	    } else {
+            iface = strings.TrimSpace(parts[0])
+	    }
 
-func getPhysicalToLogical() {
-    var logical []string
-    portTable, err := getPortTable()
-    for port, data := range portTable {
-        # TODO:
-        if isFrontPanel(port) {
-            logical = append(logical, port)
-        }
-    }
-
-    natsort.Sort(logical)
-
-    physicalToLogical := make(map[int][]string)
-    for _,intf := range logical {
-        if idx, ok := portTable[intf]["index"]; ok {
-            fpPortIndex := idx
-        }
-    }
-}
-
-func getFirstSubPort(intf string) {
-
-}
-
-func convertInterfaceSfpInfoToCliOutputString(intf string, dumpDom bool) {
-
-}
-
-func getTransceiverEEPROM(options sdc.OptionMap) ([]byte, error) {
-	var intf string
-	if intf, ok := options["interface"].Strings(); ok {
-		intf = intf
+	    if isFrontPanel(iface, GetFieldValueString(portTable, iface, defaultMissingCounterValue, "role")){
+	        logical = append(logical, iface)
+	    }
 	}
 
-	var queries [][]string
+    return logicalToPhysical[logicalPort]
+}
+
+func getFirstSubPort(logicalPort string) {
+    physicalPort := getLogicalToPhysical(logicalPort)
+}
+
+func convertInterfaceSfpInfoToCliOutputString(iface string) {
+    firstPort := getFirstSubPort(iface)
+
+}
+
+func getEEPROM(options sdc.OptionMap) (map[string]string, error){
+    var intf string
+	if v, ok := options["interface"].Strings(); ok {
+		intf = v
+	}
+
+    var queries [][]string
 	if intf == "" {
 		queries = [][]string{
-			{"STATE_DB", "TRANSCEIVER_STATUS_SW"},
+			{"APPL_DB", "PORT_TABLE"},
 		}
 	} else {
-		queries = [][]string{
-			{"STATE_DB", "TRANSCEIVER_STATUS_SW", intf},
-		}
+// 		queries = [][]string{
+// 			{"STATE_DB", "TRANSCEIVER_STATUS_SW", intf},
+// 		}
 	}
 
-	data, err := GetDataFromQueries(queries)
+// 	portTableKeys  := []string{}
+
+	portTable, err := GetMapFromQueries(queries)
 	if err != nil {
-		log.Errorf("Unable to get data from queries %v, got err: %v", queries, err)
+		log.Errorf("Unable to pull data for queries %v, got err %v", queries, err)
 		return nil, err
 	}
-	return data, nil
+
+	intfEEPROM := make(map[string]string)
+	for key := range portTable {
+	    parts := strings.SplitN(key, ":", 2)
+
+	    var iface string
+	    if len(parts) == 2 {
+            iface = strings.TrimSpace(parts[1])
+	    } else {
+            iface = strings.TrimSpace(parts[0])
+	    }
+
+        if iface != "" {
+            ok, err := isValidPhysicalPort(iface)
+            if err != nil {
+                return nil, err
+            }
+            if ok {
+                intfEEPROM[iface] = convertInterfaceSfpInfoToCliOutputString(iface)
+            }
+        }
+	}
+	return intfEEPROM, nil
 }
+

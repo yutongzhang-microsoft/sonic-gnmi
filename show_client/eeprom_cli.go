@@ -3,6 +3,7 @@ package show_client
 import (
     "sort"
     "strings"
+    "strconv"
     "github.com/facette/natsort"
 	log "github.com/golang/glog"
 	sdc "github.com/sonic-net/sonic-gnmi/sonic_data_client"
@@ -39,7 +40,7 @@ func isValidPhysicalPort(iface string) (bool, error) {
 }
 
 func getLogicalToPhysical(logicalPort string) (string, error) {
-    logicalToPhysical := make(map[string]string)
+    logicalToPhysical := make(map[string][]int)
     logical := []string{}
 
     queries := [][]string{
@@ -63,6 +64,13 @@ func getLogicalToPhysical(logicalPort string) (string, error) {
 	    if isFrontPanel(iface, GetFieldValueString(portTable, iface, defaultMissingCounterValue, "role")){
 	        logical = append(logical, iface)
 	    }
+	}
+
+	for _, intfName := range logical {
+        if _, ok := portTable[intfName]["index"]; ok{
+            fpPortIndex := strconv.Atoi(portTable[intfName]["index"])
+            logicalToPhysical[intfName] = []int{fpPortIndex}
+        }
 	}
 
     return logicalToPhysical[logicalPort]
